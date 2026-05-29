@@ -28,6 +28,7 @@ public enum Daemon {
                 if errno == EINTR { continue }
                 break
             }
+            UnixSocket.setReadTimeout(fd: clientFD, seconds: 2)
             let request = UnixSocket.readLine(fd: clientFD)
             let reply = RequestHandler.handle(request)
             UnixSocket.writeLine(fd: clientFD, reply)
@@ -62,19 +63,34 @@ public enum Daemon {
     /// Remove the socket file on common termination signals so a restart does not
     /// trip over a stale socket.
     private static func installSignalCleanup(path: String) {
-        StaleSocket.path = path
+        StaleSocket.install(path: path)
         signal(SIGINT, StaleSocket.handler)
         signal(SIGTERM, StaleSocket.handler)
     }
 }
 
-/// Holds the socket path for the C signal handler (which cannot capture context).
+/// Holds the socket path for the C signal handler.
+///
+/// The handler runs in async-signal context, where touching the Swift runtime or
+/// allocator (e.g. bridging a Swift `String` to a C string, which can `malloc`)
+/// is undefined behavior. So the path is copied once into a heap C buffer via
+/// `strdup` at install time, and the handler calls only async-signal-safe
+/// functions (`unlink`, `_exit`) on that raw pointer.
 enum StaleSocket {
-    nonisolated(unsafe) static var path: String = ""
+    nonisolated(unsafe) static var pathPointer: UnsafeMutablePointer<CChar>?
+
+    /// Snapshot the path into a C buffer before any signal can fire.
+    static func install(path: String) {
+        if let existing = pathPointer {
+            free(existing)
+            pathPointer = nil
+        }
+        pathPointer = path.withCString { strdup($0) }
+    }
 
     static let handler: @convention(c) (Int32) -> Void = { _ in
-        if !StaleSocket.path.isEmpty {
-            unlink(StaleSocket.path)
+        if let p = StaleSocket.pathPointer {
+            unlink(p)
         }
         _exit(0)
     }

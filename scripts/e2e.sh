@@ -86,6 +86,49 @@ if [[ -n "$ISSW" ]]; then
     check "fallback get matches issw" "$("$ISSW")" "$("$IMECTL" get)"
 fi
 
+# 5. daemon hardening regressions (ba0cf80 reviewer follow-ups)
+pkill -f "imectl daemon" 2>/dev/null || true
+sleep 0.3
+DAEMON_ERR=/tmp/imectl-e2e-harden-err.log
+nohup "$IMECTL" daemon >/tmp/imectl-e2e-harden-out.log 2>"$DAEMON_ERR" &
+sleep 0.8
+
+# US-002: a client that connects and sends nothing must not permanently block
+# the serial accept loop. With SO_RCVTIMEO (~2s) a concurrent request still
+# completes (bounded by the timeout) and the daemon survives.
+if command -v python3 >/dev/null 2>&1; then
+    STALL_RESULT="$(python3 - "$SOCK" <<'PY'
+import socket, sys
+sock_path = sys.argv[1]
+stall = socket.socket(socket.AF_UNIX)
+stall.connect(sock_path)          # connect, send nothing, hold open
+c = socket.socket(socket.AF_UNIX)
+c.connect(sock_path)
+c.sendall(b"get\n")
+print(c.recv(4096).decode().strip())
+c.close(); stall.close()
+PY
+)"
+    check "stalled client does not block daemon (concurrent get served)" "$ORIGINAL" "$STALL_RESULT"
+    check "daemon survives stalled client" "yes" "$(pgrep -f 'imectl daemon' >/dev/null && echo yes || echo no)"
+else
+    note "python3 unavailable; skipping stall-client check"
+fi
+
+# US-001: SIGTERM removes the socket file (async-signal-safe handler).
+DPID="$(pgrep -f 'imectl daemon' | head -1)"
+if [[ -n "$DPID" ]]; then
+    kill -TERM "$DPID" 2>/dev/null || true
+    sleep 0.6
+    check "SIGTERM removes socket file" "yes" "$([[ ! -e "$SOCK" ]] && echo yes || echo no)"
+fi
+
+# US-003: daemon startup/shutdown emits no stray blank stderr line.
+# grep -c exits 1 when count is 0; capture the numeric line only and default to 0.
+BLANKS="$(grep -cE '^$' "$DAEMON_ERR" 2>/dev/null | head -1)"
+BLANKS="${BLANKS:-0}"
+check "no stray blank stderr line from daemon" "0" "$BLANKS"
+
 if [[ "$fail" -eq 0 ]]; then
     note "ALL E2E CHECKS PASSED"
 else

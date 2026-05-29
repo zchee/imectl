@@ -7,7 +7,7 @@ public enum DaemonRouting {
     public static func run(_ args: [String]) -> CLI.Output {
         if args.first == "daemon" {
             let code = Daemon.run()
-            return CLI.Output("", .err, code: code)
+            return CLI.Output("", .err, code: code, silent: true)
         }
 
         // Try the warm daemon path: a single non-blocking connect. If anything

@@ -59,6 +59,16 @@ public enum UnixSocket {
         return fd
     }
 
+    /// Set a receive timeout (`SO_RCVTIMEO`) on `fd` so a stalled client cannot
+    /// block the daemon's serial accept loop indefinitely. After the timeout a
+    /// blocking `read` returns -1/EAGAIN, which `readLine` treats as end-of-input.
+    public static func setReadTimeout(fd: Int32, seconds: Int) {
+        var tv = timeval(tv_sec: seconds, tv_usec: 0)
+        _ = withUnsafePointer(to: &tv) { tvPtr in
+            setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, tvPtr, socklen_t(MemoryLayout<timeval>.size))
+        }
+    }
+
     /// Read all bytes up to the first `\n` (or EOF) from `fd` as a String.
     public static func readLine(fd: Int32, max: Int = 64 * 1024) -> String {
         var buffer = [UInt8]()

@@ -20,16 +20,36 @@ public enum CLI {
     """
 
     /// Result of running a command: text to print, a stream, and an exit code.
+    ///
+    /// `silent` marks a result that should emit nothing at all (used by the
+    /// `daemon` subcommand, whose work is done over the socket). It is kept
+    /// distinct from an empty `text` so that a genuinely empty payload — e.g.
+    /// `list` with zero selectable sources — still renders as the caller expects.
     public struct Output: Equatable {
         public enum Stream: Equatable { case out, err }
         public var text: String
         public var stream: Stream
         public var code: Int32
+        public var silent: Bool
 
-        public init(_ text: String, _ stream: Stream = .out, code: Int32 = 0) {
+        public init(_ text: String, _ stream: Stream = .out, code: Int32 = 0, silent: Bool = false) {
             self.text = text
             self.stream = stream
             self.code = code
+            self.silent = silent
+        }
+    }
+
+    /// Decide what a given `Output` writes to each stream, as a pure function so
+    /// the print policy is unit-testable without spawning a process. Returns the
+    /// exact bytes (including the trailing newline) destined for stdout/stderr,
+    /// or `nil` for a stream that should receive nothing.
+    public static func render(_ output: Output) -> (stdout: String?, stderr: String?) {
+        guard !output.silent else { return (nil, nil) }
+        let line = output.text + "\n"
+        switch output.stream {
+        case .out: return (line, nil)
+        case .err: return (nil, line)
         }
     }
 

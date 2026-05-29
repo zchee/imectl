@@ -1,4 +1,5 @@
 import Carbon
+import Darwin
 import Testing
 @testable import IMECore
 
@@ -73,6 +74,33 @@ struct CLITests {
         #expect(out.stream == .err)
         #expect(out.text.contains("not found"))
     }
+
+    @Test("render: silent output emits nothing on either stream")
+    func renderSilent() {
+        let r = CLI.render(CLI.Output("", .err, code: 0, silent: true))
+        #expect(r.stdout == nil)
+        #expect(r.stderr == nil)
+    }
+
+    @Test("render: empty non-silent stdout output still emits a blank line")
+    func renderEmptyNonSilent() {
+        // Regression: an empty `list` (zero selectable sources) must keep its
+        // pre-hardening behavior of printing one blank line to stdout — only the
+        // daemon's silent output is suppressed.
+        let r = CLI.render(CLI.Output("", .out))
+        #expect(r.stdout == "\n")
+        #expect(r.stderr == nil)
+    }
+
+    @Test("render: routes text to the correct stream with one trailing newline")
+    func renderStreams() {
+        let out = CLI.render(CLI.Output("hello", .out))
+        #expect(out.stdout == "hello\n")
+        #expect(out.stderr == nil)
+        let err = CLI.render(CLI.Output("boom", .err, code: 2))
+        #expect(err.stdout == nil)
+        #expect(err.stderr == "boom\n")
+    }
 }
 
 // MARK: - Daemon protocol encoding
@@ -109,6 +137,27 @@ struct DaemonProtocolTests {
         // Valid flags still encode normally.
         #expect(DaemonProtocol.encodeRequest(["get", "--id"]) == "get")
         #expect(DaemonProtocol.encodeRequest(["get", "--name"]) == "get-name")
+    }
+}
+
+// MARK: - UnixSocket helpers
+
+@Suite("UnixSocket")
+struct UnixSocketTests {
+    @Test("setReadTimeout sets SO_RCVTIMEO on the socket")
+    func readTimeoutIsApplied() throws {
+        let fd = socket(AF_UNIX, SOCK_STREAM, 0)
+        #expect(fd >= 0)
+        defer { close(fd) }
+
+        UnixSocket.setReadTimeout(fd: fd, seconds: 2)
+
+        var tv = timeval()
+        var len = socklen_t(MemoryLayout<timeval>.size)
+        let rc = getsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, &len)
+        #expect(rc == 0)
+        #expect(tv.tv_sec == 2)
+        #expect(tv.tv_usec == 0)
     }
 }
 
