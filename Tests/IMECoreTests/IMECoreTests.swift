@@ -103,6 +103,72 @@ struct CLITests {
     }
 }
 
+// MARK: - --quiet global flag
+
+@Suite("Quiet flag")
+struct QuietTests {
+    @Test("quieted silences success output but preserves the exit code")
+    func quietedSuccess() {
+        let q = CLI.Output("com.apple.keylayout.ABC", .out, code: 0).quieted()
+        #expect(q.silent)
+        #expect(q.code == 0)
+        #expect(q.stream == .out)
+        // Nothing reaches stdout once quieted.
+        #expect(CLI.render(q).stdout == nil)
+        #expect(CLI.render(q).stderr == nil)
+    }
+
+    @Test("quieted leaves errors untouched on stderr with their exit code")
+    func quietedError() {
+        let q = CLI.Output("error: not found", .err, code: 3).quieted()
+        #expect(!q.silent)
+        #expect(q.code == 3)
+        #expect(q.stream == .err)
+        #expect(CLI.render(q).stderr == "error: not found\n")
+    }
+
+    // A pure `.out` success command (no live TIS read) proves the strip ->
+    // dispatch -> quieted() path silences success output, and that the flag is
+    // position-independent. `--version` is used precisely because it never
+    // touches Carbon, keeping these unit tests deterministic; the live `get`
+    // path is covered by manual QA against the built binary.
+    @Test("quiet silences a success command and is position-independent", arguments: [
+        ["--version", "--quiet"], ["--quiet", "--version"], ["-q", "--version"],
+    ])
+    func quietSilencesSuccess(args: [String]) {
+        let out = CLI.run(args)
+        #expect(out.silent)
+        #expect(out.code == 0)
+        #expect(out.stream == .out)
+    }
+
+    // The error-passthrough invariant itself is proven purely by `quietedError`;
+    // here we confirm it through the real dispatch path on inputs that error
+    // *before* any TIS access, so the assertion stays hermetic.
+    @Test("quiet does not silence argument errors", arguments: [
+        ["set", "--quiet"],          // missing <id>: exit 2
+        ["get", "--bogus", "--quiet"], // unknown option: exit 2
+        ["--quiet", "set"],          // flag before subcommand, still exit 2
+    ])
+    func quietDoesNotSilenceErrors(args: [String]) {
+        let out = CLI.run(args)
+        #expect(!out.silent)
+        #expect(out.code == 2)
+        #expect(out.stream == .err)
+    }
+
+    @Test("quiet is stripped, not consumed as a positional argument")
+    func quietNotConsumedAsTarget() {
+        // `set --quiet` with no id must be an argument error (exit 2), proving
+        // the flag was removed before parsing rather than taken as the <id>.
+        // If quiet were consumed as the target it would attempt `set --quiet`
+        // and fail not-found (exit 3) instead.
+        let out = CLI.run(["set", "--quiet"])
+        #expect(out.code == 2)
+        #expect(out.stream == .err)
+    }
+}
+
 // MARK: - Daemon protocol encoding
 
 @Suite("Daemon protocol")

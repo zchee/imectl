@@ -5,7 +5,14 @@ import Darwin
 /// reachable, and falls back to the in-process one-shot TIS path otherwise.
 public enum DaemonRouting {
     public static func run(_ args: [String]) -> CLI.Output {
-        if args.first == "daemon" {
+        // Strip the global `--quiet`/`-q` flag before touching the daemon path so
+        // `encodeRequest` (and the parity invariant it guards) only ever sees
+        // clean args. `CLI.run` performs the identical strip itself, so the
+        // in-process fallback below is handed the original args untouched.
+        let quiet = args.contains { CLI.quietFlags.contains($0) }
+        let cleaned = args.filter { !CLI.quietFlags.contains($0) }
+
+        if cleaned.first == "daemon" {
             let code = Daemon.run()
             return CLI.Output("", .err, code: code, silent: true)
         }
@@ -13,9 +20,10 @@ public enum DaemonRouting {
         // Try the warm daemon path: a single non-blocking connect. If anything
         // about the daemon path is unavailable, fall straight through to the
         // in-process implementation — same observable behavior, just slower.
-        if let request = DaemonProtocol.encodeRequest(args),
+        if let request = DaemonProtocol.encodeRequest(cleaned),
            let reply = tryDaemon(request: request) {
-            return decode(reply: reply, args: args)
+            let output = decode(reply: reply, args: cleaned)
+            return quiet ? output.quieted() : output
         }
 
         return CLI.run(args)
