@@ -5,16 +5,25 @@ A world-fastest-latency macOS keyboard input-source CLI, written in Swift.
 `imectl` gets and switches the system keyboard input source. It is **Carbon
 (HIToolbox TIS) only, with zero AppKit linkage**, by design — AppKit cannot
 manage the *system* input source from a headless process, and linking it would
-only add cold-start latency. See the design rationale in
-[`.omc/plans/imectl-input-source-cli.md`](.omc/plans/imectl-input-source-cli.md)
-§0.
+only add cold-start latency.
 
 ## Install
 
 ```sh
 swift build -c release
-cp .build/release/imectl /usr/local/bin/
+rm -f /usr/local/bin/imectl
+cp .build/release/imectl /usr/local/bin/imectl
 ```
+
+Always `rm` the destination before copying — do not `cp` (or `install`) over an
+existing copy in place. The release binary carries an ad-hoc (linker-signed)
+code signature; overwriting in place truncates and rewrites the file under the
+same live vnode, leaving its cached code signature stale. On macOS 26+ (with the
+Code Signing Monitor active) the next launch is then killed with `SIGKILL (Code
+Signature Invalid)` even though `codesign --verify` still passes. Unlinking
+first (`rm`, or BSD `/usr/bin/install`, which renames a fresh file into place)
+discards that vnode and revalidates. Note GNU coreutils `install` truncates in
+place and does *not* help. If you ever hit this, `rm` the binary and reinstall.
 
 Requires macOS 26+ and a Swift 6.2+ toolchain.
 
